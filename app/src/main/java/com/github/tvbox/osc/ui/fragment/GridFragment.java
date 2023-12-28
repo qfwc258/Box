@@ -2,11 +2,14 @@ package com.github.tvbox.osc.ui.fragment;
 
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.animation.BounceInterpolator;
-
+import android.widget.Toast;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
-
+import com.blankj.utilcode.util.GsonUtils;
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.api.ApiConfig;
@@ -15,24 +18,21 @@ import com.github.tvbox.osc.bean.AbsXml;
 import com.github.tvbox.osc.bean.Movie;
 import com.github.tvbox.osc.bean.MovieSort;
 import com.github.tvbox.osc.bean.SourceBean;
+import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.ui.activity.DetailActivity;
 import com.github.tvbox.osc.ui.activity.FastSearchActivity;
-import com.github.tvbox.osc.ui.activity.SearchActivity;
 import com.github.tvbox.osc.ui.adapter.GridAdapter;
 import com.github.tvbox.osc.ui.dialog.GridFilterDialog;
 import com.github.tvbox.osc.ui.tv.widget.LoadMoreView;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
-import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.viewmodel.SourceViewModel;
-import com.orhanobut.hawk.Hawk;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
 import com.owen.tvrecyclerview.widget.V7GridLayoutManager;
 import com.owen.tvrecyclerview.widget.V7LinearLayoutManager;
 
-import java.util.Stack;
+import org.greenrobot.eventbus.EventBus;
 
-import android.view.ViewGroup;
-import android.widget.Toast;
+import java.util.Stack;
 
 /**
  * @author pj567
@@ -76,12 +76,26 @@ public class GridFragment extends BaseLazyFragment {
     protected int getLayoutResID() {
         return R.layout.fragment_grid;
     }
+    
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        if (savedInstanceState != null && this.sortData == null) {
+            this.sortData = GsonUtils.fromJson(savedInstanceState.getString("sortDataJson"), MovieSort.SortData.class);
+        }
+    }
 
     @Override
     protected void init() {
         initView();
         initViewModel();
         initData();
+    }
+    
+    @Override
+    public void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putString("sortDataJson", GsonUtils.toJson(sortData));        
     }
 
     private void changeView(String id) {
@@ -185,7 +199,7 @@ public class GridFragment extends BaseLazyFragment {
 
             @Override
             public void onItemSelected(TvRecyclerView parent, View itemView, int position) {
-                itemView.animate().scaleX(1.05f).scaleY(1.05f).setDuration(300).setInterpolator(new BounceInterpolator()).start();
+                itemView.animate().scaleX(1.2f).scaleY(1.2f).setDuration(300).setInterpolator(new BounceInterpolator()).start();
             }
 
             @Override
@@ -217,8 +231,8 @@ public class GridFragment extends BaseLazyFragment {
                         focusedView = view;
                         changeView(video.id);
                     } else {
-                        if (video.id.isEmpty() || video.id.startsWith("msearch:")) {
-                            jumpActivity(SearchActivity.class, bundle);
+                        if (video.id == null || video.id.isEmpty() || video.id.startsWith("msearch:")) {
+                            jumpActivity(FastSearchActivity.class, bundle);
                         } else {
                             jumpActivity(DetailActivity.class, bundle);
                         }
@@ -266,18 +280,24 @@ public class GridFragment extends BaseLazyFragment {
                     }
                     page++;
                     maxPage = absXml.movie.pagecount;
+                    if (page > maxPage) {
+                        gridAdapter.loadMoreEnd();
+                        gridAdapter.setEnableLoadMore(false);
+                    } else {
+                        gridAdapter.loadMoreComplete();
+                        gridAdapter.setEnableLoadMore(true);
+                    }
                 } else {
                     if (page == 1) {
                         showEmpty();
                     }
                     if (page > maxPage) {
                         Toast.makeText(getContext(), "没有更多了", Toast.LENGTH_SHORT).show();
+                        gridAdapter.loadMoreEnd();
+                    } else {
+                        gridAdapter.loadMoreComplete();
                     }
-                }
-                if (page > maxPage) {
-                    gridAdapter.loadMoreEnd();
-                } else {
-                    gridAdapter.loadMoreComplete();
+                    gridAdapter.setEnableLoadMore(false);
                 }
             }
         });
@@ -288,10 +308,22 @@ public class GridFragment extends BaseLazyFragment {
     }
 
     private void initData() {
+    	if (ApiConfig.get().getHomeSourceBean().getApi()==null) {
+            showEmpty();
+            return;
+        }
         showLoading();
         isLoad = false;
         scrollTop();
+        toggleFilterStatus();
         sourceViewModel.getList(sortData, page);
+    }
+
+    private void toggleFilterStatus() {
+        if (sortData.filters != null && !sortData.filters.isEmpty()) {
+            int count = sortData.filterSelectCount();
+            EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_FILTER_CHANGE, count));
+        }
     }
 
     public boolean isTop() {
@@ -304,7 +336,7 @@ public class GridFragment extends BaseLazyFragment {
     }
 
     public void showFilter() {
-        if (!sortData.filters.isEmpty() && gridFilterDialog == null) {
+    	if (sortData!=null && !sortData.filters.isEmpty() && gridFilterDialog == null) {
             gridFilterDialog = new GridFilterDialog(mContext);
             gridFilterDialog.setData(sortData);
             gridFilterDialog.setOnDismiss(new GridFilterDialog.Callback() {
@@ -317,5 +349,10 @@ public class GridFragment extends BaseLazyFragment {
         }
         if (gridFilterDialog != null)
             gridFilterDialog.show();
+    }
+
+    public void forceRefresh() {
+        page = 1;
+        initData();
     }
 }

@@ -1,8 +1,8 @@
 package com.github.tvbox.osc.viewmodel;
 
 import android.text.TextUtils;
-
 import android.util.Base64;
+
 import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.ViewModel;
 
@@ -38,10 +38,13 @@ import org.greenrobot.eventbus.EventBus;
 import org.json.JSONObject;
 
 import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -180,7 +183,7 @@ public class SourceViewModel extends ViewModel {
                             sortResult.postValue(null);
                         }
                     });
-        }else if (type == 4) {
+        } else if (type == 4) {
             OkGo.<String>get(sourceBean.getApi())
                     .tag(sourceBean.getKey() + "_sort")
                     .params("filter", "true")
@@ -196,7 +199,7 @@ public class SourceViewModel extends ViewModel {
 
                         @Override
                         public void onSuccess(Response<String> response) {
-                            String sortJson  = response.body();
+                            String sortJson = response.body();
                             LOG.i(sortJson);
                             if (sortJson != null) {
                                 AbsSortXml sortXml = sortJson(sortResult, sortJson);
@@ -232,11 +235,9 @@ public class SourceViewModel extends ViewModel {
             sortResult.postValue(null);
         }
     }
+
     // categoryContent
     public void getList(MovieSort.SortData sortData, int page) {
-        if(sortData == null){
-            return;
-        }
         SourceBean homeSourceBean = ApiConfig.get().getHomeSourceBean();
         int type = homeSourceBean.getType();
         if (type == 3) {
@@ -248,6 +249,7 @@ public class SourceViewModel extends ViewModel {
                         json(listResult, sp.categoryContent(sortData.id, page + "", true, sortData.filterSelect), homeSourceBean.getKey());
                     } catch (Throwable th) {
                         th.printStackTrace();
+                        listResult.postValue(null);
                     }
                 }
             });
@@ -257,6 +259,8 @@ public class SourceViewModel extends ViewModel {
                     .params("ac", type == 0 ? "videolist" : "detail")
                     .params("t", sortData.id)
                     .params("pg", page)
+                    .params(sortData.filterSelect)
+                    .params("f", (sortData.filterSelect == null || sortData.filterSelect.size() <= 0) ? "" : new JSONObject(sortData.filterSelect).toString())
                     .execute(new AbsCallback<String>() {
 
                         @Override
@@ -285,12 +289,12 @@ public class SourceViewModel extends ViewModel {
                             listResult.postValue(null);
                         }
                     });
-        }else if (type == 4) {
-            String ext="";
+        } else if (type == 4) {
+            String ext = "";
             if (sortData.filterSelect != null && sortData.filterSelect.size() > 0) {
                 try {
                     LOG.i(new JSONObject(sortData.filterSelect).toString());
-                    ext = Base64.encodeToString(new JSONObject(sortData.filterSelect).toString().getBytes("UTF-8"), Base64.DEFAULT |  Base64.NO_WRAP);
+                    ext = Base64.encodeToString(new JSONObject(sortData.filterSelect).toString().getBytes("UTF-8"), Base64.DEFAULT | Base64.NO_WRAP);
                     LOG.i(ext);
                 } catch (UnsupportedEncodingException e) {
                     e.printStackTrace();
@@ -334,6 +338,7 @@ public class SourceViewModel extends ViewModel {
     interface HomeRecCallback {
         void done(List<Movie.Video> videos);
     }
+
     //    homeVideoContent
     void getHomeRecList(SourceBean sourceBean, ArrayList<String> ids, HomeRecCallback callback) {
         int type = sourceBean.getType();
@@ -420,9 +425,28 @@ public class SourceViewModel extends ViewModel {
             callback.done(null);
         }
     }
+
     // detailContent
-    public void getDetail(String sourceKey, String id) {
+    public void getDetail(String sourceKey, String urlid) {
+
+        if (urlid.startsWith("push://") && ApiConfig.get().getSource("push_agent") != null) {           
+            String pushUrl = urlid.substring(7);
+            if (pushUrl.startsWith("b64:")) {
+                try {
+                    pushUrl = new String(Base64.decode(pushUrl.substring(4), Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP), "UTF-8");
+                } catch (UnsupportedEncodingException e) {
+                    e.printStackTrace();
+                }
+            } else {
+                pushUrl = URLDecoder.decode(pushUrl);
+            }
+            sourceKey = "push_agent";
+            urlid = pushUrl;
+        }
+        String id = urlid; 
         SourceBean sourceBean = ApiConfig.get().getSource(sourceKey);
+		if (sourceBean == null)
+			detailResult.postValue(null);
         int type = sourceBean.getType();
         if (type == 3) {
             spThreadPool.execute(new Runnable() {
@@ -435,10 +459,11 @@ public class SourceViewModel extends ViewModel {
                         json(detailResult, sp.detailContent(ids), sourceBean.getKey());
                     } catch (Throwable th) {
                         th.printStackTrace();
+                        detailResult.postValue(null);
                     }
                 }
             });
-        } else if (type == 0 || type == 1|| type == 4) {
+        } else if (type == 0 || type == 1 || type == 4) {
             OkGo.<String>get(sourceBean.getApi())
                     .tag("detail")
                     .params("ac", type == 0 ? "videolist" : "detail")
@@ -476,6 +501,7 @@ public class SourceViewModel extends ViewModel {
             detailResult.postValue(null);
         }
     }
+
     // searchContent
     public void getSearch(String sourceKey, String wd) {
         SourceBean sourceBean = ApiConfig.get().getSource(sourceKey);
@@ -483,9 +509,15 @@ public class SourceViewModel extends ViewModel {
         if (type == 3) {
             try {
                 Spider sp = ApiConfig.get().getCSP(sourceBean);
-                json(searchResult, sp.searchContent(wd, false), sourceBean.getKey());
+                String search = sp.searchContent(wd, false);
+                if (!TextUtils.isEmpty(search)) {
+                    json(searchResult, search, sourceBean.getKey());
+                } else {
+                    json(searchResult, "", sourceBean.getKey());
+                }
             } catch (Throwable th) {
                 th.printStackTrace();
+                json(searchResult, "", sourceBean.getKey());
             }
         } else if (type == 0 || type == 1) {
             OkGo.<String>get(sourceBean.getApi())
@@ -520,11 +552,11 @@ public class SourceViewModel extends ViewModel {
                             EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_SEARCH_RESULT, null));
                         }
                     });
-        }else if (type == 4) {
+        } else if (type == 4) {
             OkGo.<String>get(sourceBean.getApi())
                     .params("wd", wd)
-                    .params("ac" ,"detail")
-                    .params("quick" ,"false")
+                    .params("ac", "detail")
+                    .params("quick", "false")
                     .tag("search")
                     .execute(new AbsCallback<String>() {
                         @Override
@@ -554,6 +586,7 @@ public class SourceViewModel extends ViewModel {
             searchResult.postValue(null);
         }
     }
+
     // searchContent
     public void getQuickSearch(String sourceKey, String wd) {
         SourceBean sourceBean = ApiConfig.get().getSource(sourceKey);
@@ -598,11 +631,11 @@ public class SourceViewModel extends ViewModel {
                             EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_QUICK_SEARCH_RESULT, null));
                         }
                     });
-        }else if (type == 4) {
+        } else if (type == 4) {
             OkGo.<String>get(sourceBean.getApi())
                     .params("wd", wd)
-                    .params("ac" ,"detail")
-                    .params("quick" ,"true")
+                    .params("ac", "detail")
+                    .params("quick", "true")
                     .tag("search")
                     .execute(new AbsCallback<String>() {
                         @Override
@@ -632,6 +665,7 @@ public class SourceViewModel extends ViewModel {
             quickSearchResult.postValue(null);
         }
     }
+
     // playerContent
     public void getPlay(String sourceKey, String playFlag, String progressKey, String url, String subtitleKey) {
         SourceBean sourceBean = ApiConfig.get().getSource(sourceKey);
@@ -640,9 +674,9 @@ public class SourceViewModel extends ViewModel {
             spThreadPool.execute(new Runnable() {
                 @Override
                 public void run() {
-                    Spider sp = ApiConfig.get().getCSP(sourceBean);
-                    String json = sp.playerContent(playFlag, url, ApiConfig.get().getVipParseFlags());
+                    Spider sp = ApiConfig.get().getCSP(sourceBean);                    
                     try {
+			String json = sp.playerContent(playFlag, url, ApiConfig.get().getVipParseFlags());    
                         JSONObject result = new JSONObject(json);
                         result.put("key", url);
                         result.put("proKey", progressKey);
@@ -669,6 +703,8 @@ public class SourceViewModel extends ViewModel {
                     result.put("url", url);
                 }
                 result.put("playUrl", playUrl);
+                result.put("proKey", progressKey);
+                result.put("subtKey", subtitleKey);
                 result.put("flag", playFlag);
                 playResult.postValue(result);
             } catch (Throwable th) {
@@ -678,7 +714,7 @@ public class SourceViewModel extends ViewModel {
         } else if (type == 4) {
             OkGo.<String>get(sourceBean.getApi())
                     .params("play", url)
-                    .params("flag" ,playFlag)
+                    .params("flag", playFlag)
                     .tag("play")
                     .execute(new AbsCallback<String>() {
                         @Override
@@ -698,6 +734,7 @@ public class SourceViewModel extends ViewModel {
                                 JSONObject result = new JSONObject(json);
                                 result.put("key", url);
                                 result.put("proKey", progressKey);
+                                result.put("subtKey", subtitleKey);
                                 if (!result.has("flag"))
                                     result.put("flag", playFlag);
                                 playResult.postValue(result);
@@ -713,7 +750,7 @@ public class SourceViewModel extends ViewModel {
                             playResult.postValue(null);
                         }
                     });
-        }else {
+        } else {
             playResult.postValue(null);
         }
     }
@@ -772,10 +809,11 @@ public class SourceViewModel extends ViewModel {
 
     private AbsSortXml sortXml(MutableLiveData<AbsSortXml> result, String xml) {
         try {
-            XStream xstream = new XStream(new DomDriver());//创建XStream对象
+            XStream xstream = new XStream(new DomDriver());//创建Xstram对象
             xstream.autodetectAnnotations(true);
             xstream.processAnnotations(AbsSortXml.class);
             xstream.ignoreUnknownElements();
+            xstream.allowTypes(new Class[]{AbsSortXml.class});
             AbsSortXml data = (AbsSortXml) xstream.fromXML(xml);
             for (MovieSort.SortData sort : data.classes.sortList) {
                 if (sort.filters == null) {
@@ -822,48 +860,193 @@ public class SourceViewModel extends ViewModel {
                         urlInfo.beanList = infoBeanList;
                     }
                 }
-                video.sourceKey = sourceKey;
+                if (video.sourceKey == null)
+                    video.sourceKey = sourceKey;
             }
         }
     }
+    
+    private AbsXml checkPush(AbsXml data) {
+        if (data.movie != null && data.movie.videoList != null && data.movie.videoList.size() > 0) {
+            Movie.Video video = data.movie.videoList.get(0);
+            if (video != null && video.urlBean != null && video.urlBean.infoList != null && video.urlBean.infoList.size() > 0) {
+                for (int i = 0; i < video.urlBean.infoList.size(); i++) {
+                    Movie.Video.UrlBean.UrlInfo urlinfo = video.urlBean.infoList.get(i);
+                    if (urlinfo != null && urlinfo.beanList != null && !urlinfo.beanList.isEmpty()) {
+                        for (Movie.Video.UrlBean.UrlInfo.InfoBean infoBean : urlinfo.beanList) {
+                            if (infoBean.url.startsWith("push://")) {
+                                String pushUrl = infoBean.url.substring(7);
+                                if (pushUrl.startsWith("b64:")) {
+                                    try {
+                                        pushUrl = new String(Base64.decode(pushUrl.substring(4), Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP), "UTF-8");
+                                    } catch (UnsupportedEncodingException e) {
+                                        e.printStackTrace();
+                                    }
+                                } else {
+                                    pushUrl = URLDecoder.decode(pushUrl);
+                                }
 
-    private void checkThunder(AbsXml data) {
+                                final AbsXml[] resData = {null};
+
+                                final CountDownLatch countDownLatch = new CountDownLatch(1);
+                                ExecutorService threadPool = Executors.newSingleThreadExecutor();
+                                String finalPushUrl = pushUrl;
+                                threadPool.execute(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        SourceBean sb = ApiConfig.get().getSource("push_agent");
+                                        if (sb == null) {
+                                            countDownLatch.countDown();
+                                            return;
+                                        }
+                                        if (sb.getType() == 4) {
+                                            OkGo.<String>get(sb.getApi())
+                                                    .tag("detail")
+                                                    .params("ac","detail")
+                                                    .params("ids", finalPushUrl)
+                                                    .execute(new AbsCallback<String>() {
+                                                        @Override
+                                                        public String convertResponse(okhttp3.Response response) throws Throwable {
+                                                            if (response.body() != null) {
+                                                                return response.body().string();
+                                                            } else {
+                                                                return "";
+                                                            }
+                                                        }
+
+                                                        @Override
+                                                        public void onSuccess(Response<String> response) {
+                                                            String res = response.body();
+                                                            if (!TextUtils.isEmpty(res)) {
+                                                                try {
+                                                                    AbsJson absJson = new Gson().fromJson(res, new TypeToken<AbsJson>() {
+                                                                    }.getType());
+                                                                    resData[0] = absJson.toAbsXml();
+                                                                    absXml(resData[0], sb.getKey());
+                                                                } catch (Exception e) {
+                                                                    e.printStackTrace();
+                                                                }
+                                                            }
+                                                            countDownLatch.countDown();
+                                                        }
+
+                                                        @Override
+                                                        public void onError(Response<String> response) {
+                                                            super.onError(response);
+                                                            countDownLatch.countDown();
+                                                        }
+                                                    });
+                                        } else {
+                                            try {
+                                                Spider sp = ApiConfig.get().getCSP(sb);
+                                             //   ApiConfig.get().setPlayJarKey(sb.getJar());
+                                                List<String> ids = new ArrayList<>();
+                                                ids.add(finalPushUrl);
+                                                String res = sp.detailContent(ids);
+                                                if (!TextUtils.isEmpty(res)) {
+                                                    try {
+                                                        AbsJson absJson = new Gson().fromJson(res, new TypeToken<AbsJson>() {}.getType());
+                                                        resData[0] = absJson.toAbsXml();
+                                                        absXml(resData[0], sb.getKey());
+                                                    } catch (Exception e) {
+                                                        e.printStackTrace();
+                                                    }
+                                                }
+                                            } catch (Throwable th) {
+                                                th.printStackTrace();
+                                            }
+                                            countDownLatch.countDown();
+                                        }
+                                    }
+                                });
+                                try {
+                                    countDownLatch.await(15, TimeUnit.SECONDS);
+                                    threadPool.shutdown();
+                                } catch (InterruptedException e) {
+                                    e.printStackTrace();
+                                }
+                                if (resData[0] != null) {
+                                    AbsXml res = resData[0];
+                                    if (res.movie != null && res.movie.videoList != null && res.movie.videoList.size() > 0) {
+                                        Movie.Video resVideo = res.movie.videoList.get(0);
+                                        if (resVideo != null && resVideo.urlBean != null && resVideo.urlBean.infoList != null && resVideo.urlBean.infoList.size() > 0) {
+                                            if (urlinfo.beanList.size() == 1) {
+                                                video.urlBean.infoList.remove(i);
+                                            } else {
+                                                urlinfo.beanList.remove(infoBean);
+                                            }
+                                            for (Movie.Video.UrlBean.UrlInfo resUrlinfo : resVideo.urlBean.infoList) {
+                                                if (resUrlinfo != null && resUrlinfo.beanList != null && !resUrlinfo.beanList.isEmpty()) {
+                                                    video.urlBean.infoList.add(resUrlinfo);
+                                                }
+                                            }
+                                            video.sourceKey = "push_agent";
+                                            return data;
+                                        }
+                                    }
+                                }
+                                infoBean.name = "解析失败 >>> " + infoBean.name;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return data;
+    }
+
+    public void checkThunder(AbsXml data, int index) {
         boolean thunderParse = false;
         if (data.movie != null && data.movie.videoList != null && data.movie.videoList.size() == 1) {
             Movie.Video video = data.movie.videoList.get(0);
-            if (video != null && video.urlBean != null && video.urlBean.infoList != null && video.urlBean.infoList.size() == 1) {
-                Movie.Video.UrlBean.UrlInfo urlInfo = video.urlBean.infoList.get(0);
-                if (urlInfo != null && urlInfo.beanList.size() == 1 && Thunder.isSupportUrl(urlInfo.beanList.get(0).url)) {
+            if (video != null && video.urlBean != null && video.urlBean.infoList != null) {
+                boolean hasThunder = false;
+                for (int idx = 0; idx < video.urlBean.infoList.size(); idx++) {
+                    Movie.Video.UrlBean.UrlInfo urlInfo = video.urlBean.infoList.get(idx);
+                    if (Thunder.isSupportUrl(urlInfo.beanList.get(0).url)) {
+                        hasThunder = true;
+                        break;
+                    }
+                }
+                if (hasThunder) {
                     thunderParse = true;
-                    Thunder.parse(App.getInstance(), urlInfo.beanList.get(0).url, new Thunder.ThunderCallback() {
+                    Thunder.parse(App.getInstance(), video.urlBean, new Thunder.ThunderCallback() {
                         @Override
                         public void status(int code, String info) {
                             if (code >= 0) {
                                 LOG.i(info);
                             } else {
-                                urlInfo.beanList.get(0).name = info;
+                                video.urlBean.infoList.get(0).beanList.get(0).name = info;
                                 detailResult.postValue(data);
                             }
                         }
 
                         @Override
-                        public void list(String playList) {
-                            urlInfo.urls = playList;
-                            String[] str = playList.split("#");
-                            List<Movie.Video.UrlBean.UrlInfo.InfoBean> infoBeanList = new ArrayList<>();
-                            for (String s : str) {
-                                if (s.contains("$")) {
-                                    String[] ss = s.split("\\$");
-                                    if (ss.length > 0) {
-                                        if (ss.length >= 2) {
-                                            infoBeanList.add(new Movie.Video.UrlBean.UrlInfo.InfoBean(ss[0], ss[1]));
-                                        } else {
-                                            infoBeanList.add(new Movie.Video.UrlBean.UrlInfo.InfoBean((infoBeanList.size() + 1) + "", ss[0]));
+                        public void list(Map<Integer, String> urlMap) {
+                            for (int key : urlMap.keySet()) {
+                                String playList = urlMap.get(key);
+                                video.urlBean.infoList.get(key).urls = playList;
+                                String[] str = playList.split("#");
+                                List<Movie.Video.UrlBean.UrlInfo.InfoBean> infoBeanList = new ArrayList<>();
+                                for (String s : str) {
+                                    if (s.contains("$")) {
+                                        String[] ss = s.split("\\$");
+                                            /*
+                                            if (ss.length >= 2) {
+                                                infoBeanList.add(new Movie.Video.UrlBean.UrlInfo.InfoBean(ss[0], ss[1]));
+                                            }
+                                            */
+                                        if (ss.length > 0) {
+                                            if (ss.length >= 2) {
+                                                infoBeanList.add(new Movie.Video.UrlBean.UrlInfo.InfoBean(ss[0], ss[1]));
+                                            } else {
+                                                infoBeanList.add(new Movie.Video.UrlBean.UrlInfo.InfoBean((infoBeanList.size() + 1) + "", ss[0]));
+                                            }
                                         }
                                     }
                                 }
+                                video.urlBean.infoList.get(key).beanList = infoBeanList;
                             }
-                            urlInfo.beanList = infoBeanList;
                             detailResult.postValue(data);
                         }
 
@@ -875,17 +1058,18 @@ public class SourceViewModel extends ViewModel {
                 }
             }
         }
-        if (!thunderParse) {
+        if (!thunderParse && index == 0) {
             detailResult.postValue(data);
         }
     }
 
     private AbsXml xml(MutableLiveData<AbsXml> result, String xml, String sourceKey) {
         try {
-            XStream xstream = new XStream(new DomDriver());//创建Xstream对象
+            XStream xstream = new XStream(new DomDriver());//创建Xstram对象
             xstream.autodetectAnnotations(true);
             xstream.processAnnotations(AbsXml.class);
             xstream.ignoreUnknownElements();
+            xstream.allowTypes(new Class[]{AbsXml.class});
             if (xml.contains("<year></year>")) {
                 xml = xml.replace("<year></year>", "<year>0</year>");
             }
@@ -900,7 +1084,8 @@ public class SourceViewModel extends ViewModel {
                 EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_QUICK_SEARCH_RESULT, data));
             } else if (result != null) {
                 if (result == detailResult) {
-                    checkThunder(data);
+                	data = checkPush(data);
+                    checkThunder(data, 0);
                 } else {
                     result.postValue(data);
                 }
@@ -947,7 +1132,8 @@ public class SourceViewModel extends ViewModel {
                 EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_QUICK_SEARCH_RESULT, data));
             } else if (result != null) {
                 if (result == detailResult) {
-                    checkThunder(data);
+                	data = checkPush(data);
+                    checkThunder(data, 0);
                 } else {
                     result.postValue(data);
                 }

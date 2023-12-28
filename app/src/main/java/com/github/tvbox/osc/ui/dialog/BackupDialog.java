@@ -15,9 +15,9 @@ import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.data.AppDataManager;
 import com.github.tvbox.osc.ui.activity.HomeActivity;
 import com.github.tvbox.osc.ui.adapter.BackupAdapter;
+import com.github.tvbox.osc.util.DefaultConfig;
 import com.github.tvbox.osc.util.FileUtils;
 import com.hjq.permissions.OnPermissionCallback;
-import com.hjq.permissions.Permission;
 import com.hjq.permissions.XXPermissions;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
 
@@ -38,7 +38,7 @@ public class BackupDialog extends BaseDialog {
     public BackupDialog(@NonNull @NotNull Context context) {
         super(context);
         setContentView(R.layout.dialog_backup);
-        TvRecyclerView tvRecyclerView = ((TvRecyclerView) findViewById(R.id.list));
+        TvRecyclerView tvRecyclerView = findViewById(R.id.list);
         BackupAdapter adapter = new BackupAdapter();
         tvRecyclerView.setAdapter(adapter);
         adapter.setNewData(allBackup());
@@ -47,6 +47,9 @@ public class BackupDialog extends BaseDialog {
             public void onItemChildClick(BaseQuickAdapter adapter, View view, int position) {
                 if (view.getId() == R.id.tvName) {
                     restore((String) adapter.getItem(position));
+                } else if (view.getId() == R.id.tvDel) {
+                    delete((String) adapter.getItem(position));
+                    adapter.setNewData(allBackup());
                 }
             }
         });
@@ -60,11 +63,11 @@ public class BackupDialog extends BaseDialog {
         findViewById(R.id.storagePermission).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (XXPermissions.isGranted(getContext(), Permission.Group.STORAGE)) {
+                if (XXPermissions.isGranted(getContext(), DefaultConfig.StoragePermissionGroup())) {
                     Toast.makeText(getContext(), HomeActivity.getRes().getString(R.string.set_permission_ok), Toast.LENGTH_SHORT).show();
                 } else {
                     XXPermissions.with(getContext())
-                            .permission(Permission.Group.STORAGE)
+                            .permission(DefaultConfig.StoragePermissionGroup())
                             .request(new OnPermissionCallback() {
                                 @Override
                                 public void onGranted(List<String> permissions, boolean all) {
@@ -190,4 +193,16 @@ public class BackupDialog extends BaseDialog {
             Toast.makeText(getContext(), HomeActivity.getRes().getString(R.string.set_bkup_fail), Toast.LENGTH_SHORT).show();
         }
     }
+
+    void delete(String dir) {
+        try {
+            String root = Environment.getExternalStorageDirectory().getAbsolutePath();
+            File backup = new File(root + "/tvbox_backup/" + dir);
+            FileUtils.recursiveDelete(backup);
+            Toast.makeText(getContext(), HomeActivity.getRes().getString(R.string.set_bkup_del), Toast.LENGTH_SHORT).show();
+        } catch (Throwable e) {
+            e.printStackTrace();
+        }
+    }
+
 }
